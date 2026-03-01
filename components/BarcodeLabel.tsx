@@ -26,8 +26,10 @@ export const BarcodeLabel: React.FC<BarcodeLabelProps> = ({ product }) => {
     }
   }, [product.sku]);
 
-  // Clean price
-  const priceVal = product.price ? product.price.toString().replace(/[^0-9.]/g, '') : '0';
+  // Clean price and add thousand separator
+  const rawPrice = product.price ? product.price.toString().replace(/,/g, '').replace(/[^0-9.]/g, '') : '0';
+  const priceNum = parseFloat(rawPrice);
+  const priceVal = isNaN(priceNum) ? rawPrice : priceNum.toLocaleString('en-US');
 
   return (
     <div className="w-[280px] h-[140px] bg-white border border-gray-200 shadow-sm rounded-md p-3 flex flex-col items-center justify-center relative overflow-hidden group hover:border-indigo-300 transition-colors">

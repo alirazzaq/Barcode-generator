@@ -6,5 +6,3 @@ export interface Product {
   size: string;
   color: string;
 }
-
-export type InputMode = 'single' | 'bulk';
