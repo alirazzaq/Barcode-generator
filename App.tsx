@@ -1,19 +1,48 @@
 import React, { useState } from 'react';
-import { Product } from './types';
+import { CurrencyCode, CurrencyDisplayMode, Product } from './types';
 import { BulkUpload } from './components/BulkUpload';
 import { BarcodeLabel } from './components/BarcodeLabel';
 import { generatePDF } from './services/pdfGenerator';
+import { CURRENCIES, formatProductPrice } from './utils/currency';
 import { 
   Layout, 
   Download, 
   Trash2, 
   Printer, 
-  Package
+  Package,
+  Coins
 } from 'lucide-react';
+
+const QUICK_CURRENCIES: CurrencyCode[] = ['PKR', 'USD', 'EUR', 'GBP'];
 
 export default function App() {
   const [batches, setBatches] = useState<Record<string, Product[]>>({});
-  const [selectedBatchKey, setSelectedBatchKey] = useState<string | null>(null);
+  const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('PKR');
+  const [batchCurrencies, setBatchCurrencies] = useState<Record<string, CurrencyCode>>({});
+  const [displayFormat, setDisplayFormat] = useState<'auto' | CurrencyDisplayMode>('auto');
+  const [useConversion, setUseConversion] = useState(false);
+  const [conversionRateInput, setConversionRateInput] = useState('1');
+
+  const parsedRate = useConversion ? parseFloat(conversionRateInput) : 1;
+  const effectiveRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 1;
+  const resolvedDisplayMode = displayFormat === 'auto' ? undefined : displayFormat;
+
+  const getBatchCurrency = (batchKey: string): CurrencyCode => {
+    return batchCurrencies[batchKey] || currencyCode;
+  };
+
+  const handleGlobalCurrencyChange = (nextCode: CurrencyCode) => {
+    setCurrencyCode(nextCode);
+    // Reset per-sheet overrides so changing global currency updates all sheets predictably
+    setBatchCurrencies({});
+  };
+
+  const handleBatchCurrencyChange = (batchKey: string, nextCode: CurrencyCode) => {
+    setBatchCurrencies((prev) => ({
+      ...prev,
+      [batchKey]: nextCode,
+    }));
+  };
 
   const addBatches = (newBatches: Record<string, Product[]>) => {
     setBatches((prev) => {
@@ -27,12 +56,6 @@ export default function App() {
       });
       return updated;
     });
-    
-    // Auto-select the first batch if none selected
-    if (!selectedBatchKey) {
-      const firstKey = Object.keys(newBatches)[0];
-      if (firstKey) setSelectedBatchKey(firstKey);
-    }
   };
 
   const removeProduct = (batchKey: string, id: string) => {
@@ -41,9 +64,6 @@ export default function App() {
       updated[batchKey] = updated[batchKey].filter((p) => p.id !== id);
       if (updated[batchKey].length === 0) {
         delete updated[batchKey];
-        if (selectedBatchKey === batchKey) {
-          setSelectedBatchKey(Object.keys(updated)[0] || null);
-        }
       }
       return updated;
     });
@@ -54,9 +74,11 @@ export default function App() {
       setBatches((prev) => {
         const updated = { ...prev };
         delete updated[batchKey];
-        if (selectedBatchKey === batchKey) {
-          setSelectedBatchKey(Object.keys(updated)[0] || null);
-        }
+        return updated;
+      });
+      setBatchCurrencies((prev) => {
+        const updated = { ...prev };
+        delete updated[batchKey];
         return updated;
       });
     }
@@ -65,23 +87,25 @@ export default function App() {
   const clearAll = () => {
     if (confirm('Are you sure you want to clear all items from all sheets?')) {
       setBatches({});
-      setSelectedBatchKey(null);
+      setBatchCurrencies({});
     }
   };
 
   const handleDownloadPDF = (batchKey: string) => {
     const products = batches[batchKey];
     if (!products || products.length === 0) return;
-    generatePDF(products);
+    generatePDF(products, {
+      currencyCode: getBatchCurrency(batchKey),
+      displayMode: resolvedDisplayMode,
+      conversionRate: effectiveRate,
+      batchName: batchKey,
+    });
   };
 
   const batchKeys = Object.keys(batches);
-  const currentProducts = selectedBatchKey ? batches[selectedBatchKey] || [] : [];
 
   // Optimization: Only render the first 50 items in preview to prevent DOM freezing with large CSVs
   const PREVIEW_LIMIT = 50;
-  const displayProducts = currentProducts.slice(0, PREVIEW_LIMIT);
-  const hiddenCount = Math.max(0, currentProducts.length - PREVIEW_LIMIT);
 
   return (
     <div className="min-h-screen bg-slate-50/50 flex flex-col font-sans">
@@ -98,8 +122,11 @@ export default function App() {
             </div>
           </div>
           
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-500 mr-2 hidden sm:inline">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-md">
+              Currency: {currencyCode}
+            </span>
+            <span className="text-sm text-slate-500 hidden sm:inline">
               {batchKeys.length} {batchKeys.length === 1 ? 'Sheet' : 'Sheets'} loaded
             </span>
           </div>
@@ -117,6 +144,111 @@ export default function App() {
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold text-slate-800">Upload Data</h2>
                 <BulkUpload onUpload={addBatches} />
+              </div>
+            </div>
+
+            {/* Currency Settings */}
+            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                  <Coins size={17} className="text-indigo-600" />
+                  Label Currency
+                </h3>
+                <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                  Preview: {formatProductPrice('2490', currencyCode, resolvedDisplayMode, effectiveRate)}
+                </span>
+              </div>
+
+              {/* Quick Currency Buttons */}
+              <div className="grid grid-cols-4 gap-2">
+                {QUICK_CURRENCIES.map((code) => {
+                  const option = CURRENCIES.find((c) => c.code === code)!;
+                  const isActive = currencyCode === code;
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => handleGlobalCurrencyChange(code)}
+                      className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                        isActive
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'
+                      }`}
+                    >
+                      <div className="text-sm font-bold leading-tight">
+                        {option.symbol === option.code ? option.code : `${option.symbol} ${option.code}`}
+                      </div>
+                      <div className={`text-[10px] mt-0.5 truncate ${isActive ? 'text-indigo-100' : 'text-slate-500'}`}>
+                        {option.name.split(' ').pop()}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* All Currencies + Format Row */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    All Currencies
+                  </label>
+                  <select
+                    value={currencyCode}
+                    onChange={(e) => handleGlobalCurrencyChange(e.target.value as CurrencyCode)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {CURRENCIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code} ({c.symbol}) - {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Label Format
+                  </label>
+                  <select
+                    value={displayFormat}
+                    onChange={(e) => setDisplayFormat(e.target.value as 'auto' | CurrencyDisplayMode)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="auto">Auto ($, €, £, PKR)</option>
+                    <option value="symbol">Symbol ($ / € / £)</option>
+                    <option value="code">Code (USD / EUR / GBP)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Optional Price Conversion Multiplier */}
+              <div className="pt-1 border-t border-slate-100">
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={useConversion}
+                    onChange={(e) => setUseConversion(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  Convert uploaded prices using an exchange rate
+                </label>
+
+                {useConversion && (
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <span className="text-xs text-slate-500 whitespace-nowrap">Multiply price by:</span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0.0001"
+                      value={conversionRateInput}
+                      onChange={(e) => setConversionRateInput(e.target.value)}
+                      placeholder="e.g. 0.0036"
+                      className="w-28 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span className="text-[11px] text-slate-400">
+                      (1 = no change)
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -168,10 +300,11 @@ export default function App() {
                     const products = batches[batchKey];
                     const displayProducts = products.slice(0, PREVIEW_LIMIT);
                     const hiddenCount = Math.max(0, products.length - PREVIEW_LIMIT);
+                    const batchCurrency = getBatchCurrency(batchKey);
 
                     return (
                       <div key={batchKey} className="border-b border-slate-100 last:border-0">
-                        <div className="p-4 bg-slate-50/80 flex justify-between items-center sticky top-0 z-10 backdrop-blur-sm border-b border-slate-100">
+                        <div className="p-4 bg-slate-50/80 flex flex-wrap gap-2 justify-between items-center sticky top-0 z-10 backdrop-blur-sm border-b border-slate-100">
                           <div className="flex items-center gap-2">
                             <h3 className="font-bold text-slate-900">{batchKey}</h3>
                             <span className="text-xs font-medium text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
@@ -179,6 +312,18 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
+                            <select
+                              aria-label={`Currency for ${batchKey}`}
+                              value={batchCurrency}
+                              onChange={(e) => handleBatchCurrencyChange(batchKey, e.target.value as CurrencyCode)}
+                              className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              {CURRENCIES.map((c) => (
+                                <option key={c.code} value={c.code}>
+                                  {c.code} ({c.symbol})
+                                </option>
+                              ))}
+                            </select>
                             <button
                               onClick={() => clearBatch(batchKey)}
                               className="text-red-500 hover:text-red-600 text-xs font-medium flex items-center gap-1 p-1.5 rounded hover:bg-red-50 transition-colors"
@@ -200,7 +345,12 @@ export default function App() {
                           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                             {displayProducts.map((product) => (
                               <div key={product.id} className="relative group">
-                                <BarcodeLabel product={product} />
+                                <BarcodeLabel
+                                  product={product}
+                                  currencyCode={batchCurrency}
+                                  displayMode={resolvedDisplayMode}
+                                  conversionRate={effectiveRate}
+                                />
                                 <button
                                   onClick={() => removeProduct(batchKey, product.id)}
                                   className="absolute -top-2 -right-2 bg-white text-red-500 border border-red-100 p-1.5 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 hover:scale-110"
@@ -232,7 +382,7 @@ export default function App() {
               {/* Footer Stat */}
               <div className="p-4 border-t border-slate-100 bg-white text-xs text-slate-500 flex justify-between items-center">
                 <span>Total Items (All Sheets): {Object.values(batches).reduce((acc: number, b: Product[]) => acc + b.length, 0)}</span>
-                <span>Format: Code 128 (PKR)</span>
+                <span>Format: Code 128 ({currencyCode})</span>
               </div>
             </div>
           </div>

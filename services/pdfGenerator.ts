@@ -1,6 +1,14 @@
 import jsPDF from 'jspdf';
 import JsBarcode from 'jsbarcode';
-import { Product } from '../types';
+import { CurrencyCode, CurrencyDisplayMode, Product } from '../types';
+import { formatProductPrice } from '../utils/currency';
+
+export interface PDFGeneratorOptions {
+  currencyCode?: CurrencyCode;
+  displayMode?: CurrencyDisplayMode;
+  conversionRate?: number;
+  batchName?: string;
+}
 
 // Helper to generate a base64 barcode image
 const generateBarcodeBase64 = (sku: string): string => {
@@ -16,7 +24,14 @@ const generateBarcodeBase64 = (sku: string): string => {
   return canvas.toDataURL('image/jpeg');
 };
 
-export const generatePDF = (products: Product[]) => {
+export const generatePDF = (products: Product[], options: PDFGeneratorOptions = {}) => {
+  const {
+    currencyCode = 'PKR',
+    displayMode,
+    conversionRate = 1,
+    batchName,
+  } = options;
+
   // A4 dimensions in mm: 210 x 297
   const doc = new jsPDF({
     orientation: 'p',
@@ -27,9 +42,6 @@ export const generatePDF = (products: Product[]) => {
   const pageWidth = 210;
   
   // New Configuration: 2 Columns, 7 Rows (14 per page)
-  // Adjusted height to 36mm as requested. 
-  // 36mm * 8 rows = 288mm, which is too tight for A4 (297mm) with safe margins.
-  // Using 7 rows (standard Avery L7163 style is 2x7).
   const cols = 2;
   const rows = 7;
   const labelWidth = 96; 
@@ -40,10 +52,6 @@ export const generatePDF = (products: Product[]) => {
   // Calculate margins to center the grid
   const totalGridWidth = (cols * labelWidth) + ((cols - 1) * gutterX);
   const marginX = (pageWidth - totalGridWidth) / 2;
-  
-  // Calculate vertical margin to center vertically
-  // const totalGridHeight = (rows * labelHeight) + ((rows - 1) * gutterY);
-  // const marginY = (297 - totalGridHeight) / 2;
   const marginY = 12; // Fixed top margin often safer for printers
 
   let colIndex = 0;
@@ -87,12 +95,9 @@ export const generatePDF = (products: Product[]) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     
-    // Clean price string and add thousand separator
-    const rawPrice = product.price ? product.price.toString().replace(/,/g, '').replace(/[^0-9.]/g, '') : '0';
-    const priceNum = parseFloat(rawPrice);
-    const priceVal = isNaN(priceNum) ? rawPrice : priceNum.toLocaleString('en-US');
-    
-    const metaText = `${product.size} • ${product.color} • PKR ${priceVal}`;
+    const formattedPrice = formatProductPrice(product.price, currencyCode, displayMode, conversionRate);
+    const metaParts = [product.size, product.color, formattedPrice].filter((part) => part && part.trim() !== '');
+    const metaText = metaParts.join(' • ');
     
     doc.text(metaText, centerX, currentY, { align: "center" });
     
@@ -124,5 +129,6 @@ export const generatePDF = (products: Product[]) => {
     }
   });
 
-  doc.save(`barcodes_${new Date().toISOString().slice(0, 10)}.pdf`);
+  const safeBatch = batchName ? `${batchName.replace(/[^a-z0-9_-]/gi, '_')}_` : '';
+  doc.save(`barcodes_${safeBatch}${currencyCode}_${new Date().toISOString().slice(0, 10)}.pdf`);
 };

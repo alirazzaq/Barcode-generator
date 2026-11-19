@@ -1,12 +1,21 @@
 import React, { useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
-import { Product } from '../types';
+import { CurrencyCode, CurrencyDisplayMode, Product } from '../types';
+import { formatProductPrice } from '../utils/currency';
 
 interface BarcodeLabelProps {
   product: Product;
+  currencyCode?: CurrencyCode;
+  displayMode?: CurrencyDisplayMode;
+  conversionRate?: number;
 }
 
-export const BarcodeLabel: React.FC<BarcodeLabelProps> = ({ product }) => {
+export const BarcodeLabel: React.FC<BarcodeLabelProps> = ({
+  product,
+  currencyCode = 'PKR' as CurrencyCode,
+  displayMode,
+  conversionRate = 1,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -26,10 +35,8 @@ export const BarcodeLabel: React.FC<BarcodeLabelProps> = ({ product }) => {
     }
   }, [product.sku]);
 
-  // Clean price and add thousand separator
-  const rawPrice = product.price ? product.price.toString().replace(/,/g, '').replace(/[^0-9.]/g, '') : '0';
-  const priceNum = parseFloat(rawPrice);
-  const priceVal = isNaN(priceNum) ? rawPrice : priceNum.toLocaleString('en-US');
+  const formattedPrice = formatProductPrice(product.price, currencyCode, displayMode, conversionRate);
+  const metaParts = [product.size, product.color].filter((part) => part && part.trim() !== '');
 
   return (
     <div className="w-[280px] h-[140px] bg-white border border-gray-200 shadow-sm rounded-md p-3 flex flex-col items-center justify-center relative overflow-hidden group hover:border-indigo-300 transition-colors">
@@ -42,11 +49,13 @@ export const BarcodeLabel: React.FC<BarcodeLabelProps> = ({ product }) => {
 
       {/* Size, Color, Price */}
       <div className="text-xs text-gray-600 mb-2 font-medium whitespace-nowrap">
-        {product.size} 
-        <span className="mx-1.5 text-gray-400">•</span> 
-        {product.color}
-        <span className="mx-1.5 text-gray-400">•</span>
-        <span className="font-semibold text-slate-800">PKR {priceVal}</span>
+        {metaParts.map((part, idx) => (
+          <React.Fragment key={idx}>
+            {part}
+            <span className="mx-1.5 text-gray-400">•</span>
+          </React.Fragment>
+        ))}
+        <span className="font-semibold text-slate-800">{formattedPrice}</span>
       </div>
 
       {/* Barcode */}
